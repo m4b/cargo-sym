@@ -41,7 +41,8 @@ impl TransDuctinator for goblin::elf::Elf {
         for sym in iters {
             let name = &strtab[sym.st_name() as usize];
             let demangle = rustc_demangle::demangle(name);
-            syms.push(Symbol::new(demangle, sym.st_value()));
+            // we skip boring empty symbol names and imports
+            if !name.is_empty() && (!config.exports || !sym.is_import()) { syms.push(Symbol::new(demangle, sym.st_value()));}
         }
         syms.sort_by(|s1, s2| s1.offset.cmp(&s2.offset));
         syms
@@ -76,11 +77,14 @@ fn get_target(crate_name: &str) -> Option<PathBuf> {
     None
 }
 
-fn get_symbols(fd: &mut File, config: &Config) -> io::Result<()> {
+fn get_symbols (fd: &mut File, config: &Config) -> io::Result<()> {
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];
     let err = ErrorKind::InvalidInput;
     let metadata = try!(fd.metadata());
+    let mut buffer = Vec::new();
+    try!(fd.read_to_end(&mut buffer));
+    let mut fd = &mut Cursor::new(&buffer);
     try!(fd.read(&mut magic));
     try!(fd.seek(SeekFrom::Start(0)));
     if &magic[0..goblin::archive::SIZEOF_MAGIC] == goblin::archive::MAGIC {
