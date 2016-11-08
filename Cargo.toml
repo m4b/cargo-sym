@@ -2,8 +2,11 @@
 name = "cargo-sym"
 version = "0.0.1"
 authors = ["m4b <m4b.github.io@gmail.com>"]
-description = "Prints various binary symbols in your crate"
 keywords = ["cargo", "cargo-subcommand", "crates", "symbols", "debug"]
+readme = "README.md"
+repository = "https://github.com/m4b/cargo-sym"
+license = "MIT"
+description = "Prints various binary symbols in your crate"
 
 [dependencies]
 goblin = "0.0.5"
