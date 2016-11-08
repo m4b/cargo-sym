@@ -5,7 +5,7 @@ extern crate toml;
 
 pub mod symbol;
 
-use clap::{Arg, App};
+use clap::{Arg, App, SubCommand, AppSettings};
 use symbol::Symbol;
 
 use std::fs::File;
@@ -42,7 +42,9 @@ impl TransDuctinator for goblin::elf::Elf {
             let name = &strtab[sym.st_name() as usize];
             let demangle = rustc_demangle::demangle(name);
             // we skip boring empty symbol names and imports
-            if !name.is_empty() && (!config.exports || !sym.is_import()) { syms.push(Symbol::new(demangle, sym.st_value()));}
+            if !name.is_empty() && (!config.exports || !sym.is_import()) {
+                syms.push(Symbol::new(demangle, sym.st_value()));
+            }
         }
         syms.sort_by(|s1, s2| s1.offset.cmp(&s2.offset));
         syms
@@ -77,7 +79,7 @@ fn get_target(crate_name: &str) -> Option<PathBuf> {
     None
 }
 
-fn get_symbols (fd: &mut File, config: &Config) -> io::Result<()> {
+fn get_symbols(fd: &mut File, config: &Config) -> io::Result<()> {
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];
     let err = ErrorKind::InvalidInput;
@@ -113,40 +115,45 @@ fn get_symbols (fd: &mut File, config: &Config) -> io::Result<()> {
         }
         Ok(())
     } else {
-        Err(io::Error::new(err, format ! ("No binary backend available for target: {:?}", & fd)))
+        Err(io::Error::new(err,
+                           format!("No binary backend available for target: {:?}", &fd)))
     }
 }
 
 fn main() {
 
     let matches = App::new("cargo-sym")
-                      .version("0.0.1")
-                      .author("m4b <m4b.github.io@gmail.com>")
-                      .about("Prints the debugging symbols in your binary; more fancy stuff to \
-                              come later")
-                      .arg(Arg::with_name("binary")
-                               .short("-f")
-                               .long("file")
-                               .value_name("BINARY")
-                               .help("The binary file to read ")
-                               .takes_value(true))
-                      .arg(Arg::with_name("demangle")
-                               .short("-d")
-                               .long("demangle")
-                               .value_name("DEMANGLE")
-                               .takes_value(false)
-                               .help("Whether to demangle or not "))
-                      .arg(Arg::with_name("exports")
-                               .short("-e")
-                               .long("exports")
-                               .value_name("EXPORTS")
-                               .takes_value(false)
-                               .help("Print the exported symbols that are importable by other \
-                                      binaries"))
+                      .version("0.0.2")
+                      .bin_name("cargo")
+                      .settings(&[AppSettings::GlobalVersion, AppSettings::SubcommandRequired])
+                      .subcommand(SubCommand::with_name("sym")
+                                      .author("m4b <m4b.github.io@gmail.com>")
+                                      .about("Prints the debugging symbols in your binary; more \
+                                              fancy stuff to come later")
+                                      .args(&[Arg::with_name("binary")
+                                                  .short("-f")
+                                                  .long("file")
+                                                  .value_name("BINARY")
+                                                  .help("The binary file to read ")
+                                                  .takes_value(true),
+                                              Arg::with_name("demangle")
+                                                  .short("-d")
+                                                  .long("demangle")
+                                                  .value_name("DEMANGLE")
+                                                  .takes_value(false)
+                                                  .help("Whether to demangle or not "),
+                                              Arg::with_name("exports")
+                                                  .short("-e")
+                                                  .long("exports")
+                                                  .value_name("EXPORTS")
+                                                  .takes_value(false)
+                                                  .help("Print the exported symbols that are \
+                                                         importable by other binaries")]))
                       .get_matches();
 
 
     let crate_name = get_crate_name();
+    let matches = matches.subcommand_matches("sym").unwrap();
     let demangle = matches.is_present("demangle");
     let exports = matches.is_present("exports");
     let config = Config {
@@ -160,5 +167,7 @@ fn main() {
                  }
                  .expect("Cannot open file");
 
-    get_symbols(&mut fd, &config).expect(&format!("Cannot read symbols from: {}", &config.crate_name));
+    get_symbols(&mut fd, &config)
+        .expect(&format!("Cannot read symbols from: {}", &config.crate_name));
+
 }
