@@ -314,6 +314,6 @@ fn main() {
                  .expect("Cannot open file");
 
     run(&mut fd, &config)
-        .expect(&format!("Cannot read symbols from: {}", &config.crate_name));
+        .expect(&format!("Cannot read symbols from: {:?}", &fd));
 
 }
