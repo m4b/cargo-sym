@@ -276,13 +276,13 @@ fn main() {
                                                   .help("The binary file to read ")
                                                   .takes_value(true),
                                           Arg::with_name("disassemble")
-                                              .short("-D")
+                                              .short("-d")
                                               .long("disassemble")
                                               .value_name("DISASSEMBLE")
                                               .takes_value(false)
                                               .help("Whether to disassaemble or not "),
                                           Arg::with_name("demangle")
-                                                  .short("-d")
+                                                  .short("-C")
                                                   .long("demangle")
                                                   .value_name("DEMANGLE")
                                                   .takes_value(false)
