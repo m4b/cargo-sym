@@ -16,7 +16,7 @@ Then:
 3. `cargo sym -e` will print every exported symbol importable by other binaries
 4. `cargo sym -e -C` will do `-d` and `-e` together :]
 5. `cargo sym -d` will disassemble your binary, objdump style. **experimental**
-6. `cargo sym -d -C -f /bin/ls` will disassemble the binary `ls` at `/bin/` (actually most distros strip `/bin/ls` so it actually won't)
+6. `cargo sym -d -C /bin/ls` will disassemble the binary `ls` at `/bin/` (actually most distros strip `/bin/ls` so it actually won't)
 
 # TODO:
 
