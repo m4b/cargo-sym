@@ -270,11 +270,9 @@ fn main() {
                                       .about("Prints the debugging symbols in your binary; more \
                                               fancy stuff to come later")
                                       .args(&[Arg::with_name("binary")
-                                                  .short("-f")
-                                                  .long("file")
-                                                  .value_name("BINARY")
                                                   .help("The binary file to read ")
-                                                  .takes_value(true),
+                                                  .required(false)
+                                                  .index(1),
                                           Arg::with_name("disassemble")
                                               .short("-d")
                                               .long("disassemble")
@@ -315,5 +313,4 @@ fn main() {
 
     run(&mut fd, &config)
         .expect(&format!("Cannot read symbols from: {:?}", &fd));
-
 }
