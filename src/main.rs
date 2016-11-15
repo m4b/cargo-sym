@@ -20,7 +20,7 @@ quick_error! {
     #[derive(Debug)]
     pub enum Error {
         Io(err: std::io::Error) { from () }
-        CapstoneError(err: capstone::error::Err) { from ()}
+        CapstoneError(err: capstone::error::Error) { from ()}
         UnsupportedBinary { from() }
         SectionlessBinary { description("Cannot analyze and disassemble a sectionless (section stripped) binary") from() }
         StrippedBinary { description("Cannot analyze and disassemble a stripped binary") from() }
@@ -125,7 +125,7 @@ fn valid_disassembly_target(name: &str) -> bool {
 fn print_disass(bytes: &[u8], capstone: &capstone::Capstone, symbol: Symbol, demangle: bool) -> Result<()> {
     let offset = symbol.offset as usize;
     let bytes = &bytes[offset .. offset + symbol.size as usize];
-    let instructions = capstone.disasm(bytes, symbol.offset)?;
+    let instructions = capstone.disassemble(bytes, symbol.offset)?;
     if !instructions.is_empty() {
         println!("{}:\n{}", symbol.maybe_demangle(demangle), instructions);
     }
