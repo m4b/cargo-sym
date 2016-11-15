@@ -262,7 +262,7 @@ fn run(fd: &mut File, config: &Config) -> Result<()> {
 fn main() {
 
     let matches = App::new("cargo-sym")
-                      .version("0.0.2")
+                      .version("0.0.3")
                       .bin_name("cargo")
                       .settings(&[AppSettings::GlobalVersion, AppSettings::SubcommandRequired])
                       .subcommand(SubCommand::with_name("sym")
