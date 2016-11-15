@@ -9,13 +9,14 @@ use rustc_demangle::{self, Demangle};
 pub struct Symbol<'a> {
     demangle: Demangle<'a>,
     pub offset: u64,
+    pub vaddr: u64,
     pub size: usize,
 }
 
 impl<'a> Symbol<'a> {
-    pub fn new(name: &str, offset: u64, size: usize) -> Symbol {
+    pub fn new(name: &str, offset: u64, vaddr: u64, size: usize) -> Symbol {
         let demangle = rustc_demangle::demangle(name);
-        Symbol { demangle: demangle, offset: offset, size: size }
+        Symbol { demangle: demangle, offset: offset, size: size, vaddr: vaddr }
     }
 
     /// Return this symbols original name
@@ -32,21 +33,21 @@ impl<'a> Symbol<'a> {
         if !demangle {
             name = &self.name();
         }
-        println!("{:016x} {}", self.offset, name)
+        println!("{:016x} {}", self.vaddr, name)
     }
     pub fn maybe_demangle(&self, demangle: bool) -> String {
         let mut name: &str = &self.demangle();
         if !demangle {
             name = &self.name();
         }
-        format!("{:016x} {}", self.offset, name)
+        format!("{:016x} {}", self.vaddr, name)
     }
 
 }
 
 impl<'a> Display for Symbol<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{:016x} {}", self.offset, self.demangle)
+        write!(fmt, "{:016x} {}", self.vaddr, self.demangle)
     }
 }
 

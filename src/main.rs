@@ -64,7 +64,7 @@ impl TransDuctinator for goblin::elf::Elf {
             let name = &strtab[sym.st_name() as usize];
             // we skip boring empty symbol names and imports
             if !name.is_empty() && (!config.exports || !sym.is_import()) {
-                syms.push(Symbol::new(name, sym.st_value(), sym.st_size() as usize));
+                syms.push(Symbol::new(name, sym.st_value(), sym.st_value(), sym.st_size() as usize));
             }
         }
         syms.sort_by(|s1, s2| s1.offset.cmp(&s2.offset));
@@ -180,23 +180,27 @@ fn disassemble_elf (bytes: &mut Cursor<&Vec<u8>>, elf: &goblin::elf::Elf, config
             current_section = section_index;
             println!("Disassembly of section {}\n", section_name);
             match section_name {
-                // maybe do some specific plt disassembly stuff
-                // this is a hack for printing PLT entries (plt.got is untested and doesn't work)
+                // TODO: this is now a _broken_ hack for printing PLT entries (it doesn't print them,
+                // because there are no longer any symbols with the plt section to set off this logic)
                 &".plt" | &".plt.got" => {
-                    let mut start = section.sh_offset() as usize;
-                    let size = section.sh_entsize() as usize;
+                    let start = section.sh_offset();
+                    let vaddr = section.sh_addr();
+                    let ssize = section.sh_entsize() as usize;
+                    let size = section.sh_entsize();
                     let strtab = &elf.dynstrtab;
-                    let symbol = Symbol::new(&"PLT", start as u64, size);
+                    let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
                     print_disass(&bytes, &capstone, symbol, config.demangle)?;
-                    start += size;
+                    let mut offset = size;
                     for rela in &elf.pltrela {
+                        let start = start + offset;
+                        let vaddr = vaddr + offset;
                         let symindex = rela.r_sym();
                         let sym = elf.dynsyms.get(symindex);
                         let name = &strtab[sym.st_name()];
                         //println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
-                        let symbol = Symbol::new(&name, start as u64, size);
+                        let symbol = Symbol::new(&name, start, vaddr, ssize);
                         print_disass(&bytes, &capstone, symbol, config.demangle)?;
-                        start += size;
+                        offset += size;
                     }
                 },
                 _ => ()
@@ -219,7 +223,7 @@ fn disassemble_elf (bytes: &mut Cursor<&Vec<u8>>, elf: &goblin::elf::Elf, config
             }
         }
         //println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
-        let symbol = Symbol::new(name, offset, size);
+        let symbol = Symbol::new(name, offset, sym.st_value(), size);
         print_disass(&bytes, &capstone, symbol, config.demangle)?;
         i += 1;
     }
