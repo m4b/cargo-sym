@@ -38,13 +38,23 @@ pub struct Config {
 }
 
 /// A fibulurous Trans-Ductinator which hammifies the Symglob
-/// - It knows how to return `Symbol`s
+/// - It knows how to return `Symbol`s _and_ disassemble itself
 /// When a new binary backend becomes available, `impl` a new TransDuctinator!
 pub trait TransDuctinator {
     fn get_arch(&self) -> Option<capstone::Arch>;
     fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
     fn disassemble(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()>;
+    #[inline]
+    fn print_instructions(&self, bytes: &[u8], config: &Config, capstone: &capstone::Capstone, symbol: Symbol) -> Result<()> {
+        let offset = symbol.offset as usize;
+        let bytes = &bytes[offset .. offset + symbol.size];
+        let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
+        if !instructions.is_empty() {
+            println!("{}:\n{}", symbol.format(config.demangle, self.is_64()), instructions);
+        }
+        Ok(())
+    }
     fn print_symbols(&self, config: &Config) {
         for symbol in self.symbols(config) {
             println!("{}", symbol.format(config.demangle, self.is_64()))
@@ -58,17 +68,6 @@ pub trait TransDuctinator {
         }
         Ok(())
     }
-}
-
-#[inline]
-fn print_disass(bytes: &[u8], capstone: &capstone::Capstone, symbol: Symbol, demangle: bool, is_64: bool) -> Result<()> {
-    let offset = symbol.offset as usize;
-    let bytes = &bytes[offset .. offset + symbol.size];
-    let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
-    if !instructions.is_empty() {
-        println!("{}:\n{}", symbol.format(demangle, is_64), instructions);
-    }
-    Ok(())
 }
 
 #[inline]
@@ -165,7 +164,7 @@ impl TransDuctinator for goblin::elf::Elf {
                         let size = section.sh_entsize();
                         let strtab = &self.dynstrtab;
                         let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
-                        print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+                        self.print_instructions(&bytes, config, &capstone, symbol)?;
                         let mut offset = size;
                         for rela in &self.pltrela {
                             let start = start + offset;
@@ -175,7 +174,7 @@ impl TransDuctinator for goblin::elf::Elf {
                             let name = &strtab[sym.st_name()];
                             //println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
                             let symbol = Symbol::new(&name, start, vaddr, ssize);
-                            print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+                            self.print_instructions(&bytes, config, &capstone, symbol)?;
                             offset += size;
                         }
                     },
@@ -200,7 +199,7 @@ impl TransDuctinator for goblin::elf::Elf {
             }
             //println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
             let symbol = Symbol::new(name, offset, sym.st_value(), size);
-            print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+            self.print_instructions(&bytes, config, &capstone, symbol)?;
             i += 1;
         }
         Ok(())
