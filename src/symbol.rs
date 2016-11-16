@@ -33,9 +33,9 @@ impl<'a> Symbol<'a> {
             name = &self.name();
         }
         if is_64 {
-            format!("{:016x} {}", self.vaddr, name)
+            format!("{:016x} <{}>", self.vaddr, name)
         } else {
-            format!("{:08x} {}", self.vaddr, name)
+            format!("{:08x} <{}>", self.vaddr, name)
         }
     }
 }

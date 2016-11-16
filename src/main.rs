@@ -7,9 +7,9 @@ extern crate capstone;
 extern crate quick_error;
 
 pub mod symbol;
+use symbol::Symbol;
 
 use clap::{Arg, App, SubCommand, AppSettings};
-use symbol::Symbol;
 
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, ErrorKind};
@@ -45,23 +45,80 @@ pub struct Config {
 /// When a new binary backend becomes available, `impl` a new `SymObject`!
 pub trait SymObject: fmt::Debug {
     fn get_arch(&self) -> Option<capstone::Arch>;
+    fn little_endian(&self) -> bool;
     fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
     fn disassemble(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()>;
     #[inline]
     fn print_instructions(&self,
-                          bytes: &[u8],
-                          config: &Config,
-                          capstone: &capstone::Capstone,
-                          symbol: Symbol)
+                          instructions: &capstone::instruction::Instructions,
+                          _mode: &capstone::Mode)
                           -> Result<()> {
+        for instruction in instructions.iter() {
+            if self.is_64() {
+                print!("{:16x}: ", instruction.address());
+            } else {
+                print!("{:8x}: ", instruction.address());
+            }
+            let mut width = 2;
+            match self.get_arch().unwrap() {
+                capstone::Arch::X86 => {
+                    // print x86 (and any other variable length ISAs byte wise)
+                    // TODO: add big-endian printer, though i think big endian x86 systems don't exist (in practice)?
+                    for byte in instruction.bytes() {
+                        print!(" {:02x}", byte);
+                    }
+                    // for the spaces
+                    width += 1;
+                }
+                // these are fixed width instructions so we print them as a unified unit
+                // fixme: this will need work for ISAs other than ARM, but maybe who cares about them? :D
+                _ => {
+                    print!(" ");
+                    // TODO: thumb 4 byte instructions are printed differently/slightly incorrectly, e.g.:
+                    // f241 0018 	movw	r0, #4120
+                    // 0018f241 	movw	r0, #4120
+                    if self.little_endian() {
+                        for (_i, byte) in instruction.bytes().iter().rev().enumerate() {
+                            print!("{:02x}", byte);
+                        }
+                    } else {
+                        for byte in instruction.bytes() {
+                            print!("{:02x}", byte);
+                        }
+                    }
+                }
+            }
+            let multiplier = if self.is_64() { 16 } else { 8 };
+            let remainder = (multiplier * width) - (instruction.len()) * width;
+            for _ in 0..remainder {
+                print!(" ");
+            }
+            if let Some(mnemonic) = instruction.mnemonic() {
+                print!(" {}", mnemonic);
+                if let Some(op_str) = instruction.op_str() {
+                    print!(" {}", op_str);
+                }
+            }
+            print!("\n");
+        }
+        Ok(())
+    }
+    #[inline]
+    fn print_instructions_at_symbol(&self,
+                                    bytes: &[u8],
+                                    config: &Config,
+                                    capstone: &capstone::Capstone,
+                                    mode: &capstone::Mode,
+                                    symbol: Symbol)
+                                    -> Result<()> {
         let offset = symbol.offset as usize;
         let bytes = &bytes[offset..offset + symbol.size];
         let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
         if !instructions.is_empty() {
-            println!("{}:\n{}",
-                     symbol.format(config.demangle, self.is_64()),
-                     instructions);
+            println!("{}", symbol.format(config.demangle, self.is_64()));
+            self.print_instructions(&instructions, mode)?;
+            println!("")
         }
         Ok(())
     }
@@ -73,8 +130,7 @@ pub trait SymObject: fmt::Debug {
     fn analyze(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
         if config.disassemble {
             self.disassemble(bytes, config)?;
-        }
-        if config.dump {
+        } else if config.dump {
             println!("{:#?}", self);
         } else {
             self.print_symbols(config);
@@ -101,6 +157,9 @@ fn valid_disassembly_target(name: &str) -> bool {
 impl SymObject for goblin::elf::Elf {
     fn is_64(&self) -> bool {
         self.is_64
+    }
+    fn little_endian(&self) -> bool {
+        self.little_endian
     }
     fn symbols(&self, config: &Config) -> Vec<Symbol> {
         let mut syms = Vec::new();
@@ -139,7 +198,7 @@ impl SymObject for goblin::elf::Elf {
         let arch = self.get_arch().ok_or(Error::UnsupportedBinary)?;
         let mut capstone = capstone::Capstone::new(arch)?;
         capstone.att();
-        let mode = if self.little_endian {
+        let mut mode = if self.little_endian {
             capstone::Mode::LittleEndian
         } else {
             capstone::Mode::BigEndian
@@ -149,13 +208,6 @@ impl SymObject for goblin::elf::Elf {
         let shdr_strtab = &self.shdr_strtab;
         let bytes = bytes.get_ref();
         let section_headers = &self.section_headers;
-
-        //        let bias = |sym, section| {
-        //            let sym: &goblin::elf::Sym = sym;
-        //            let section: &goblin::elf::SectionHeader = section;
-        //            (sym.st_value() - section.sh_addr()) + section.sh_offset()
-        //        };
-
         if section_headers.len() == 0 {
             return Err(Error::SectionlessBinary);
         }
@@ -169,6 +221,7 @@ impl SymObject for goblin::elf::Elf {
         if syms.len() == 0 {
             return Err(Error::StrippedBinary);
         }
+
         // filter the symbols to remove imports and empty symbol names
         let mut elf_syms = syms.into_iter()
             .filter(|sym| !sym.is_import() && !&strtab[sym.st_name()].is_empty())
@@ -210,7 +263,7 @@ impl SymObject for goblin::elf::Elf {
                         let size = section.sh_entsize();
                         let strtab = &self.dynstrtab;
                         let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
-                        self.print_instructions(&bytes, config, &capstone, symbol)?;
+                        self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
                         let mut offset = size;
                         for rela in &self.pltrela {
                             let start = start + offset;
@@ -220,7 +273,7 @@ impl SymObject for goblin::elf::Elf {
                             let name = &strtab[sym.st_name()];
                             // println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
                             let symbol = Symbol::new(&name, start, vaddr, ssize);
-                            self.print_instructions(&bytes, config, &capstone, symbol)?;
+                            self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
                             offset += size;
                         }
                     }
@@ -233,7 +286,7 @@ impl SymObject for goblin::elf::Elf {
                 continue;
             }
             let mut size = sym.st_size() as usize;
-            let offset = bias(&sym, &section);
+            let mut offset = bias(&sym, &section);
             // we compute the size of unsized symbols on the fly. it sucks. because elf sucks.
             if size == 0 && !is_last {
                 let next_sym = &elf_syms[i + 1];
@@ -246,8 +299,24 @@ impl SymObject for goblin::elf::Elf {
                 }
             }
             // println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
-            let symbol = Symbol::new(name, offset, sym.st_value(), size);
-            self.print_instructions(&bytes, config, &capstone, symbol)?;
+            let vaddr = {
+                let mut vaddr = sym.st_value();
+                if arch == capstone::Arch::ARM {
+                    if vaddr & 1 == 1 {
+                        // we can speed up capstone mode switching here by using cached value, but who cares for now
+                        mode = capstone::Mode::Thumb;
+                        vaddr = vaddr - 1;
+                        offset = offset - 1;
+                    } else {
+                        // untested with hybrid binaries...
+                        mode = capstone::Mode::Arm32;
+                    }
+                }
+                vaddr
+            };
+            capstone.mode(&[mode])?;
+            let symbol = Symbol::new(name, offset, vaddr, size);
+            self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
             i += 1;
         }
         Ok(())
