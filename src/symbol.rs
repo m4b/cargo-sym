@@ -27,22 +27,17 @@ impl<'a> Symbol<'a> {
     pub fn demangle(&self) -> String {
         self.demangle.to_string()
     }
-
-    pub fn print(&self, demangle: bool) {
+    pub fn format(&self, demangle: bool, is_64: bool) -> String {
         let mut name: &str = &self.demangle();
         if !demangle {
             name = &self.name();
         }
-        println!("{:016x} {}", self.vaddr, name)
-    }
-    pub fn maybe_demangle(&self, demangle: bool) -> String {
-        let mut name: &str = &self.demangle();
-        if !demangle {
-            name = &self.name();
+        if is_64 {
+            format!("{:016x} {}", self.vaddr, name)
+        } else {
+            format!("{:08x} {}", self.vaddr, name)
         }
-        format!("{:016x} {}", self.vaddr, name)
     }
-
 }
 
 impl<'a> Display for Symbol<'a> {

@@ -42,17 +42,46 @@ pub struct Config {
 /// When a new binary backend becomes available, `impl` a new TransDuctinator!
 pub trait TransDuctinator {
     fn get_arch(&self) -> Option<capstone::Arch>;
+    fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
+    fn disassemble(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()>;
     fn print_symbols(&self, config: &Config) {
         for symbol in self.symbols(config) {
-            symbol.print(config.demangle)
+            println!("{}", symbol.format(config.demangle, self.is_64()))
         }
     }
+    fn run (&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
+        if config.disassemble {
+            self.disassemble(bytes, config)?;
+        } else {
+            self.print_symbols(config);
+        }
+        Ok(())
+    }
+}
+
+#[inline]
+fn print_disass(bytes: &[u8], capstone: &capstone::Capstone, symbol: Symbol, demangle: bool, is_64: bool) -> Result<()> {
+    let offset = symbol.offset as usize;
+    let bytes = &bytes[offset .. offset + symbol.size];
+    let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
+    if !instructions.is_empty() {
+        println!("{}:\n{}", symbol.format(demangle, is_64), instructions);
+    }
+    Ok(())
+}
+
+#[inline]
+fn bias (sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
+    (sym.st_value() - section.sh_addr()) + section.sh_offset()
 }
 
 // this is all terribly inefficient right now, primarily due to goblin parsing and reading everything
 // on earth. that should be fixed soon with some special magiks
 impl TransDuctinator for goblin::elf::Elf {
+    fn is_64(&self) -> bool {
+        self.is_64
+    }
     fn symbols(&self, config: &Config) -> Vec<Symbol> {
         let mut syms = Vec::new();
         let (iter, strtab) = if config.exports {
@@ -81,6 +110,100 @@ impl TransDuctinator for goblin::elf::Elf {
             EM_386 => Some(X86),
             _ => None
         }
+    }
+
+    fn disassemble (&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
+        let arch = self.get_arch().ok_or(Error::UnsupportedBinary)?;
+        let mut capstone = capstone::Capstone::new(arch)?;
+        capstone.att();
+        let mode = if self.little_endian { capstone::Mode::LittleEndian } else { capstone::Mode::BigEndian };
+        capstone.mode(&[mode])?;
+        let strtab = &self.strtab;
+        let shdr_strtab = &self.shdr_strtab;
+        let bytes = bytes.get_ref();
+        let section_headers = &self.section_headers;
+        if section_headers.len() == 0 { return Err(Error::SectionlessBinary)}
+        let sections: Vec<(_, &str)> = section_headers.into_iter().map (| section | {
+            let section_name = &shdr_strtab[section.sh_name()];
+            (section, section_name)
+        }).collect();
+        let syms = &self.syms;
+        if syms.len() == 0 { return Err(Error::StrippedBinary)}
+        // filter the symbols to remove imports and empty symbol names
+        let mut elf_syms = syms.into_iter().filter(|sym| !sym.is_import() && !&strtab[sym.st_name()].is_empty()).collect::<Vec<_>>();
+        elf_syms.sort_by(|s1, s2| {
+            use std::cmp::Ordering::*;
+            match s1.st_shndx().cmp(&s2.st_shndx()) {
+                Equal => {
+                    s1.st_value().cmp(&s2.st_value())
+                },
+                order => order
+            }
+        });
+        let mut current_section = 0;
+        let nsyms = elf_syms.len();
+        let mut i = 0;
+        for sym in &elf_syms {
+            //println!("name: {} st_shndx: {}", &strtab[sym.st_name()],  sym.st_shndx());
+            //println!("{} {:?}", &strtab[sym.st_name()], sym);
+            let is_last = i >= nsyms - 1;
+            let section_index = sym.st_shndx();
+            if section_index >= sections.len() { continue }
+            let (ref section, ref section_name) = sections[sym.st_shndx() as usize];
+            if section.sh_type() != goblin::elf::section_header::SHT_PROGBITS || !valid_disassembly_target(section_name) { continue }
+            //if name.is_empty() { name = format!("{}@{}", &dynstrtab[sym.st_name()], section_name)}
+            if current_section != section_index {
+                current_section = section_index;
+                println!("Disassembly of section {}\n", section_name);
+                match section_name {
+                    // TODO: this is now a _broken_ hack for printing PLT entries (it doesn't print them,
+                    // because there are no longer any symbols with the plt section to set off this logic)
+                    &".plt" | &".plt.got" => {
+                        let start = section.sh_offset();
+                        let vaddr = section.sh_addr();
+                        let ssize = section.sh_entsize() as usize;
+                        let size = section.sh_entsize();
+                        let strtab = &self.dynstrtab;
+                        let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
+                        print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+                        let mut offset = size;
+                        for rela in &self.pltrela {
+                            let start = start + offset;
+                            let vaddr = vaddr + offset;
+                            let symindex = rela.r_sym();
+                            let sym = self.dynsyms.get(symindex);
+                            let name = &strtab[sym.st_name()];
+                            //println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
+                            let symbol = Symbol::new(&name, start, vaddr, ssize);
+                            print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+                            offset += size;
+                        }
+                    },
+                    _ => ()
+                }
+            }
+            // we're not doing plt stuff, so regular disassembly
+            let name = &strtab[sym.st_name()];
+            if name.is_empty() { continue }
+            let mut size = sym.st_size() as usize;
+            let offset = bias(&sym, &section);
+            // we compute the size of unsized symbols on the fly. it sucks. because elf sucks.
+            if size == 0 && !is_last {
+                let next_sym = &elf_syms[i + 1];
+                //println!("i: {} current {}, name{} next: {:?}", i, current_section, name, next_sym);
+                if current_section == next_sym.st_shndx() {
+                    let next_offset = bias(&next_sym, &section);
+                    size = (next_offset - offset) as usize;
+                } else {
+                    size = section.sh_size() as usize;
+                }
+            }
+            //println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
+            let symbol = Symbol::new(name, offset, sym.st_value(), size);
+            print_disass(&bytes, &capstone, symbol, config.demangle, self.is_64)?;
+            i += 1;
+        }
+        Ok(())
     }
 }
 
@@ -121,125 +244,6 @@ fn valid_disassembly_target(name: &str) -> bool {
     }
 }
 
-#[inline]
-fn print_disass(bytes: &[u8], capstone: &capstone::Capstone, symbol: Symbol, demangle: bool) -> Result<()> {
-    let offset = symbol.offset as usize;
-    let bytes = &bytes[offset .. offset + symbol.size as usize];
-    let instructions = capstone.disassemble(bytes, symbol.offset)?;
-    if !instructions.is_empty() {
-        println!("{}:\n{}", symbol.maybe_demangle(demangle), instructions);
-    }
-    Ok(())
-}
-
-fn bias (sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
-    (sym.st_value() - section.sh_addr()) + section.sh_offset()
-}
-
-fn disassemble_elf (bytes: &mut Cursor<&Vec<u8>>, elf: &goblin::elf::Elf, config: &Config) -> Result<()> {
-    let arch = elf.get_arch().ok_or(Error::UnsupportedBinary)?;
-    let mut capstone = capstone::Capstone::new(arch)?;
-    capstone.att();
-    let mode = if elf.little_endian { capstone::Mode::LittleEndian } else { capstone::Mode::BigEndian };
-    capstone.mode(&[mode])?;
-    let strtab = &elf.strtab;
-    let shdr_strtab = &elf.shdr_strtab;
-    let bytes = bytes.get_ref();
-    let section_headers = &elf.section_headers;
-    if section_headers.len() == 0 { return Err(Error::SectionlessBinary)}
-    let sections: Vec<(_, &str)> = section_headers.into_iter().map (| section | {
-        let section_name = &shdr_strtab[section.sh_name()];
-        (section, section_name)
-    }).collect();
-    let syms = &elf.syms;
-    if syms.len() == 0 { return Err(Error::StrippedBinary)}
-    // filter the symbols to remove imports and empty symbol names
-    let mut elf_syms = syms.into_iter().filter(|sym| !sym.is_import() && !&strtab[sym.st_name()].is_empty()).collect::<Vec<_>>();
-    elf_syms.sort_by(|s1, s2| {
-        use std::cmp::Ordering::*;
-        match s1.st_shndx().cmp(&s2.st_shndx()) {
-            Equal => {
-                s1.st_value().cmp(&s2.st_value())
-            },
-            order => order
-        }
-    });
-    let mut current_section = 0;
-    let nsyms = elf_syms.len();
-    let mut i = 0;
-    for sym in &elf_syms {
-        //println!("name: {} st_shndx: {}", &strtab[sym.st_name()],  sym.st_shndx());
-        //println!("{} {:?}", &strtab[sym.st_name()], sym);
-        let is_last = i >= nsyms - 1;
-        let section_index = sym.st_shndx();
-        if section_index >= sections.len() { continue }
-        let (ref section, ref section_name) = sections[sym.st_shndx() as usize];
-        if section.sh_type() != goblin::elf::section_header::SHT_PROGBITS || !valid_disassembly_target(section_name) { continue }
-        //if name.is_empty() { name = format!("{}@{}", &dynstrtab[sym.st_name()], section_name)}
-        if current_section != section_index {
-            current_section = section_index;
-            println!("Disassembly of section {}\n", section_name);
-            match section_name {
-                // TODO: this is now a _broken_ hack for printing PLT entries (it doesn't print them,
-                // because there are no longer any symbols with the plt section to set off this logic)
-                &".plt" | &".plt.got" => {
-                    let start = section.sh_offset();
-                    let vaddr = section.sh_addr();
-                    let ssize = section.sh_entsize() as usize;
-                    let size = section.sh_entsize();
-                    let strtab = &elf.dynstrtab;
-                    let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
-                    print_disass(&bytes, &capstone, symbol, config.demangle)?;
-                    let mut offset = size;
-                    for rela in &elf.pltrela {
-                        let start = start + offset;
-                        let vaddr = vaddr + offset;
-                        let symindex = rela.r_sym();
-                        let sym = elf.dynsyms.get(symindex);
-                        let name = &strtab[sym.st_name()];
-                        //println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
-                        let symbol = Symbol::new(&name, start, vaddr, ssize);
-                        print_disass(&bytes, &capstone, symbol, config.demangle)?;
-                        offset += size;
-                    }
-                },
-                _ => ()
-            }
-        }
-        // we're not doing plt stuff, so regular disassembly
-        let name = &strtab[sym.st_name()];
-        if name.is_empty() { continue }
-        let mut size = sym.st_size() as usize;
-        let offset = bias(&sym, &section);
-        // we compute the size of unsized symbols on the fly. it sucks. because elf sucks.
-        if size == 0 && !is_last {
-            let next_sym = &elf_syms[i + 1];
-            //println!("i: {} current {}, name{} next: {:?}", i, current_section, name, next_sym);
-            if current_section == next_sym.st_shndx() {
-                let next_offset = bias(&next_sym, &section);
-                size = (next_offset - offset) as usize;
-            } else {
-                size = section.sh_size() as usize;
-            }
-        }
-        //println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
-        let symbol = Symbol::new(name, offset, sym.st_value(), size);
-        print_disass(&bytes, &capstone, symbol, config.demangle)?;
-        i += 1;
-    }
-    Ok(())
-}
-
-fn do_elf (bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
-    let elf = goblin::elf::Elf::parse(bytes)?;
-    if config.disassemble {
-        disassemble_elf(bytes, &elf, config)?;
-    } else {
-        elf.print_symbols(config);
-    }
-    Ok(())
-}
-
 fn run(fd: &mut File, config: &Config) -> Result<()> {
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];
@@ -254,9 +258,12 @@ fn run(fd: &mut File, config: &Config) -> Result<()> {
         let archive = goblin::archive::Archive::parse(bytes, metadata.len() as usize)?;
         let bytes = archive.extract(&format!("{}.0.o", &config.crate_name), bytes)?;
         let mut bytes = Cursor::new(&bytes);
-        do_elf(&mut bytes, config)
+        // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
+        let elf = goblin::elf::Elf::parse(&mut bytes)?;
+        elf.run(&mut bytes, config)
     } else if &magic[0..4] == goblin::elf::header::ELFMAG {
-        do_elf(bytes, config)
+        let elf = goblin::elf::Elf::parse(bytes)?;
+        elf.run(bytes, config)
     } else {
         Err(Error::from(io::Error::new(err,
                            format!("No binary backend available for target: {:?}", &fd))))
