@@ -37,10 +37,10 @@ pub struct Config {
     pub disassemble: bool,
 }
 
-/// A fibulurous Trans-Ductinator which hammifies the Symglob
-/// - It knows how to return `Symbol`s _and_ disassemble itself
-/// When a new binary backend becomes available, `impl` a new TransDuctinator!
-pub trait TransDuctinator {
+/// A symbol object.
+/// - It knows how to return `Symbol`s _and_ disassemble itself, as well as other useful information about itself.
+/// When a new binary backend becomes available, `impl` a new `SymObject`!
+pub trait SymObject {
     fn get_arch(&self) -> Option<capstone::Arch>;
     fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
@@ -60,7 +60,7 @@ pub trait TransDuctinator {
             println!("{}", symbol.format(config.demangle, self.is_64()))
         }
     }
-    fn run (&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
+    fn analyze (&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
         if config.disassemble {
             self.disassemble(bytes, config)?;
         } else {
@@ -70,14 +70,22 @@ pub trait TransDuctinator {
     }
 }
 
-#[inline]
-fn bias (sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
+
+
+fn bias(sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
     (sym.st_value() - section.sh_addr()) + section.sh_offset()
+}
+
+fn valid_disassembly_target(name: &str) -> bool {
+    match name {
+        ".init" | ".plt" | ".got" | ".plt.got" | ".text" | ".fini" => true,
+        _ => false,
+    }
 }
 
 // this is all terribly inefficient right now, primarily due to goblin parsing and reading everything
 // on earth. that should be fixed soon with some special magiks
-impl TransDuctinator for goblin::elf::Elf {
+impl SymObject for goblin::elf::Elf {
     fn is_64(&self) -> bool {
         self.is_64
     }
@@ -121,6 +129,13 @@ impl TransDuctinator for goblin::elf::Elf {
         let shdr_strtab = &self.shdr_strtab;
         let bytes = bytes.get_ref();
         let section_headers = &self.section_headers;
+
+//        let bias = |sym, section| {
+//            let sym: &goblin::elf::Sym = sym;
+//            let section: &goblin::elf::SectionHeader = section;
+//            (sym.st_value() - section.sh_addr()) + section.sh_offset()
+//        };
+
         if section_headers.len() == 0 { return Err(Error::SectionlessBinary)}
         let sections: Vec<(_, &str)> = section_headers.into_iter().map (| section | {
             let section_name = &shdr_strtab[section.sh_name()];
@@ -236,13 +251,6 @@ fn get_target(crate_name: &str) -> Option<PathBuf> {
     None
 }
 
-fn valid_disassembly_target(name: &str) -> bool {
-    match name {
-        ".init" | ".plt" | ".plt.got" | ".text" | ".fini" => true,
-        _ => false,
-    }
-}
-
 fn run(fd: &mut File, config: &Config) -> Result<()> {
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];
@@ -259,10 +267,10 @@ fn run(fd: &mut File, config: &Config) -> Result<()> {
         let mut bytes = Cursor::new(&bytes);
         // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
         let elf = goblin::elf::Elf::parse(&mut bytes)?;
-        elf.run(&mut bytes, config)
+        elf.analyze(&mut bytes, config)
     } else if &magic[0..4] == goblin::elf::header::ELFMAG {
         let elf = goblin::elf::Elf::parse(bytes)?;
-        elf.run(bytes, config)
+        elf.analyze(bytes, config)
     } else {
         Err(Error::from(io::Error::new(err,
                            format!("No binary backend available for target: {:?}", &fd))))
