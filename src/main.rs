@@ -32,36 +32,128 @@ quick_error! {
 type Result<T> = result::Result<T, Error>;
 
 /// The command line state we're interested in
-pub struct Config {
+#[derive(Debug)]
+pub struct Config<'a> {
     pub exports: bool,
     pub demangle: bool,
     pub crate_name: String,
     pub disassemble: bool,
     pub dump: bool,
+    pub file: Option<&'a str>,
+}
+
+impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
+    fn from(matches: &'a clap::ArgMatches) -> Self {
+        let crate_name = get_crate_name();
+        let matches = matches.subcommand_matches("sym").unwrap();
+        let demangle = matches.is_present("demangle");
+        let exports = matches.is_present("exports");
+        let disassemble = matches.is_present("disassemble");
+        let dump = matches.is_present("dump");
+        let file_name = matches.value_of("binary");
+        Config {
+            demangle: demangle,
+            exports: exports,
+            crate_name: crate_name.to_string(),
+            disassemble: disassemble,
+            dump: dump,
+            file: file_name,
+        }
+    }
 }
 
 /// A symbol object.
 /// - It knows how to return `Symbol`s _and_ disassemble itself, as well as other useful information about itself.
 /// When a new binary backend becomes available, `impl` a new `SymObject`!
 pub trait SymObject: fmt::Debug {
-    fn get_arch(&self) -> Option<capstone::Arch>;
+    fn get_arch(&self) -> Result<capstone::Arch>;
     fn little_endian(&self) -> bool;
     fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
-    fn disassemble(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()>;
-    #[inline]
-    fn print_instructions(&self,
-                          instructions: &capstone::instruction::Instructions,
-                          _mode: &capstone::Mode)
-                          -> Result<()> {
-        for instruction in instructions.iter() {
-            if self.is_64() {
-                print!("{:16x}: ", instruction.address());
-            } else {
-                print!("{:8x}: ", instruction.address());
+    fn disassemble(&self,
+                   bytes: &mut Cursor<&Vec<u8>>,
+                   disassembler: capstone::Capstone,
+                   config: &Config)
+                   -> Result<()>;
+
+    fn new_disassembler(&self) -> Result<capstone::Capstone> {
+        let arch = self.get_arch()?;
+        let mut capstone = capstone::Capstone::new(arch)?;
+        capstone.att();
+        let mode = if self.little_endian() {
+            capstone::Mode::LittleEndian
+        } else {
+            capstone::Mode::BigEndian
+        };
+        capstone.mode(&[mode])?;
+        Ok(capstone)
+    }
+    fn print_vaddr(&self, vaddr: u64) {
+        if self.is_64() {
+            print!("{:16x}: ", vaddr);
+        } else {
+            print!("{:8x}: ", vaddr);
+        }
+    }
+    fn print_non_function(&self, bytes: &[u8], vaddr: u64, _config: &Config) -> Result<()> {
+        const NCOLUMNS: usize = 4;
+        let column_width = if self.is_64() { 8 } else { 4 };
+        let mut column = 1;
+        let mut stack_buffer = [0u8; 8 * NCOLUMNS];
+        let mut hex_buffer = &mut stack_buffer[..column_width * NCOLUMNS];
+        let spaces = |columns| (column_width * columns * 2) + columns;
+        let bytes_per_row = column_width * NCOLUMNS;
+        let spaces_per_row = (column_width * NCOLUMNS * 2) + NCOLUMNS;
+        let buffer_len = hex_buffer.len();
+        self.print_vaddr(vaddr);
+        let mut column_idx = 0;
+        for (i, byte) in bytes.iter().rev().enumerate() {
+            print!("{:02x}", byte);
+            let idx = (i + 1) % column_width;
+            hex_buffer[i % buffer_len] = *byte;
+            if idx == 0 {
+                print!(" ");
+                if column % NCOLUMNS == 0 {
+                    // hextable
+                    for byte in &hex_buffer[..] {
+                        let c = char::from(*byte);
+                        let c = if c.is_control() { '.' } else { c };
+                        print!("{}", c);
+                    }
+                    println!();
+                    self.print_vaddr(vaddr + 1 + i as u64);
+                }
+                column += 1;
             }
+            column_idx = idx;
+        }
+        // yes this is so horrible i want to die too
+        let remaining_columns = (column % NCOLUMNS) - 1;
+        let spaces_written = spaces(remaining_columns) + (column_idx * 2);
+        let bytes_written = bytes_per_row -
+                            (((NCOLUMNS - remaining_columns) * column_width) - column_idx);
+        // print!("\n{} {} written: {} bytes {}/{}", column_idx, remaining_columns, spaces_written, bytes_written, bytes_per_row);
+        let whitespace = spaces_per_row - spaces_written;
+        for _ in 0..whitespace {
+            print!(" ");
+        }
+        for byte in &hex_buffer[..bytes_written] {
+            let c = char::from(*byte);
+            let c = if c.is_control() { '.' } else { c };
+            print!("{}", c);
+        }
+        println!();
+        Ok(())
+    }
+    #[inline]
+    fn print_function(&self,
+                      instructions: &capstone::instruction::Instructions,
+                      _mode: &capstone::Mode)
+                      -> Result<()> {
+        for instruction in instructions.iter() {
+            self.print_vaddr(instruction.address());
             let mut width = 2;
-            match self.get_arch().unwrap() {
+            match self.get_arch()? {
                 capstone::Arch::X86 => {
                     // print x86 (and any other variable length ISAs byte wise)
                     // TODO: add big-endian printer, though i think big endian x86 systems don't exist (in practice)?
@@ -114,12 +206,16 @@ pub trait SymObject: fmt::Debug {
                                     -> Result<()> {
         let offset = symbol.offset as usize;
         let bytes = &bytes[offset..offset + symbol.size];
-        let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
-        if !instructions.is_empty() {
-            println!("{}", symbol.format(config.demangle, self.is_64()));
-            self.print_instructions(&instructions, mode)?;
-            println!("")
+        println!("{}:", symbol.format(config.demangle, self.is_64()));
+        if symbol.is_function {
+            let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
+            if !instructions.is_empty() {
+                self.print_function(&instructions, mode)?;
+            }
+        } else {
+            self.print_non_function(bytes, symbol.vaddr, config)?
         }
+        println!();
         Ok(())
     }
     fn print_symbols(&self, config: &Config) {
@@ -129,7 +225,8 @@ pub trait SymObject: fmt::Debug {
     }
     fn analyze(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
         if config.disassemble {
-            self.disassemble(bytes, config)?;
+            let disassembler = self.new_disassembler()?;
+            self.disassemble(bytes, disassembler, config)?;
         } else if config.dump {
             println!("{:#?}", self);
         } else {
@@ -138,8 +235,6 @@ pub trait SymObject: fmt::Debug {
         Ok(())
     }
 }
-
-
 
 fn bias(sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
     (sym.st_value() - section.sh_addr()) + section.sh_offset()
@@ -168,42 +263,45 @@ impl SymObject for goblin::elf::Elf {
         } else {
             (&self.syms, &self.strtab)
         };
+        let mask = match self.header.e_machine() {
+            goblin::elf::header::EM_ARM => !1,
+            _ => !0,
+        };
         for sym in iter {
             let name = &strtab[sym.st_name() as usize];
             // we skip boring empty symbol names and imports
             if !name.is_empty() && (!config.exports || !sym.is_import()) {
-                syms.push(Symbol::new(name,
-                                      sym.st_value(),
-                                      sym.st_value(),
-                                      sym.st_size() as usize));
+                let addr = {
+                    let addr = sym.st_value();
+                    if addr == 0 { 0 } else { addr & mask }
+                };
+                syms.push(Symbol::new(name, addr, addr, sym.st_size() as usize, sym.is_function()));
             }
         }
         syms.sort_by(|s1, s2| s1.offset.cmp(&s2.offset));
         syms
     }
 
-    fn get_arch(&self) -> Option<capstone::Arch> {
+    fn get_arch(&self) -> Result<capstone::Arch> {
         use goblin::elf::header::*;
         use capstone::Arch::*;
         match self.header.e_machine() {
-            EM_AARCH64 => Some(ARM64),
-            EM_ARM => Some(ARM),
-            EM_X86_64 => Some(X86),
-            EM_386 => Some(X86),
-            _ => None,
+            EM_AARCH64 => Ok(ARM64),
+            EM_ARM => Ok(ARM),
+            EM_X86_64 => Ok(X86),
+            EM_386 => Ok(X86),
+            _ => Err(Error::UnsupportedBinary),
         }
     }
 
-    fn disassemble(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
-        let arch = self.get_arch().ok_or(Error::UnsupportedBinary)?;
-        let mut capstone = capstone::Capstone::new(arch)?;
-        capstone.att();
-        let mut mode = if self.little_endian {
-            capstone::Mode::LittleEndian
-        } else {
-            capstone::Mode::BigEndian
-        };
-        capstone.mode(&[mode])?;
+    fn disassemble(&self,
+                   bytes: &mut Cursor<&Vec<u8>>,
+                   disassembler: capstone::Capstone,
+                   config: &Config)
+                   -> Result<()> {
+        let mut mode = capstone::Mode::LittleEndian;
+        let arch = self.get_arch()?;
+        let mut capstone = disassembler;
         let strtab = &self.strtab;
         let shdr_strtab = &self.shdr_strtab;
         let bytes = bytes.get_ref();
@@ -224,7 +322,11 @@ impl SymObject for goblin::elf::Elf {
 
         // filter the symbols to remove imports and empty symbol names
         let mut elf_syms = syms.into_iter()
-            .filter(|sym| !sym.is_import() && !&strtab[sym.st_name()].is_empty())
+            .filter(|sym| {
+                (sym.is_function() ||
+                 goblin::elf::sym::st_type(sym.st_info()) == goblin::elf::sym::STT_OBJECT) &&
+                !sym.is_import() && !&strtab[sym.st_name()].is_empty()
+            })
             .collect::<Vec<_>>();
         elf_syms.sort_by(|s1, s2| {
             use std::cmp::Ordering::*;
@@ -262,7 +364,7 @@ impl SymObject for goblin::elf::Elf {
                         let ssize = section.sh_entsize() as usize;
                         let size = section.sh_entsize();
                         let strtab = &self.dynstrtab;
-                        let symbol = Symbol::new(&"PLT", start, vaddr, ssize);
+                        let symbol = Symbol::new(&"PLT", start, vaddr, ssize, true);
                         self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
                         let mut offset = size;
                         for rela in &self.pltrela {
@@ -272,8 +374,12 @@ impl SymObject for goblin::elf::Elf {
                             let sym = self.dynsyms.get(symindex);
                             let name = &strtab[sym.st_name()];
                             // println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
-                            let symbol = Symbol::new(&name, start, vaddr, ssize);
-                            self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
+                            let symbol = Symbol::new(&name, start, vaddr, ssize, true);
+                            self.print_instructions_at_symbol(&bytes,
+                                                              config,
+                                                              &capstone,
+                                                              &mode,
+                                                              symbol)?;
                             offset += size;
                         }
                     }
@@ -315,7 +421,7 @@ impl SymObject for goblin::elf::Elf {
                 vaddr
             };
             capstone.mode(&[mode])?;
-            let symbol = Symbol::new(name, offset, vaddr, size);
+            let symbol = Symbol::new(name, offset, vaddr, size, sym.is_function());
             self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
             i += 1;
         }
@@ -388,7 +494,7 @@ fn main() {
         .settings(&[AppSettings::GlobalVersion, AppSettings::SubcommandRequired])
         .subcommand(SubCommand::with_name("sym")
             .author("m4b <m4b.github.io@gmail.com>")
-            .about("Prints the debugging symbols in your binary; more fancy stuff to come later")
+            .about("Prints the debugging symbols in your binary. Or disassembles arbitrary ISAs for 32/64 bit binaries. No big deal")
             .args(&[Arg::with_name("binary")
                         .help("The binary file to read ")
                         .required(false)
@@ -419,22 +525,13 @@ fn main() {
                                binaries")]))
         .get_matches();
 
-    let crate_name = get_crate_name();
-    let matches = matches.subcommand_matches("sym").unwrap();
-    let demangle = matches.is_present("demangle");
-    let exports = matches.is_present("exports");
-    let disassemble = matches.is_present("disassemble");
-    let dump = matches.is_present("dump");
-    let config = Config {
-        demangle: demangle,
-        exports: exports,
-        crate_name: crate_name.to_string(),
-        disassemble: disassemble,
-        dump: dump,
-    };
-    let mut fd = match matches.value_of("binary") {
-            Some(binary) => File::open(Path::new(binary)),
-            _ => File::open(get_target(&crate_name).expect("No valid binary found")),
+    let config = Config::from(&matches);
+    let mut fd = match config.file {
+            Some(binary) => {
+                println!("binary : {}", binary);
+                File::open(Path::new(binary))
+            }
+            _ => File::open(get_target(&config.crate_name).expect("No valid binary found")),
         }
         .expect("Cannot open file");
 
