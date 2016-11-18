@@ -11,17 +11,17 @@ extern crate quick_error;
 //#[macro_use]
 //extern crate error_chain;
 
-mod errors;
+pub mod errors;
 pub mod symbol;
+pub mod marksman;
 use symbol::Symbol;
 use errors::*;
+use marksman::Marksman;
 
 use clap::{Arg, App, SubCommand, AppSettings};
 
-use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, ErrorKind};
 use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
 use std::fmt;
 
 /// The command line state we're interested in
@@ -29,15 +29,14 @@ use std::fmt;
 pub struct Config<'a> {
     pub exports: bool,
     pub demangle: bool,
-    pub crate_name: String,
     pub disassemble: bool,
     pub dump: bool,
     pub file: Option<&'a str>,
 }
 
 impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
+
     fn from(matches: &'a clap::ArgMatches) -> Self {
-        let crate_name = get_crate_name();
         let matches = matches.subcommand_matches("sym").unwrap();
         let demangle = matches.is_present("demangle");
         let exports = matches.is_present("exports");
@@ -47,7 +46,6 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
         Config {
             demangle: demangle,
             exports: exports,
-            crate_name: crate_name.to_string(),
             disassemble: disassemble,
             dump: dump,
             file: file_name,
@@ -160,7 +158,7 @@ pub trait SymObject: fmt::Debug {
                 // fixme: this will need work for ISAs other than ARM, but maybe who cares about them? :D
                 _ => {
                     print!(" ");
-                    // TODO: thumb 4 byte instructions are printed differently/slightly incorrectly, e.g.:
+                    // FIXME: thumb 4 byte instructions are printed differently/slightly incorrectly, e.g.:
                     // f241 0018 	movw	r0, #4120
                     // 0018f241 	movw	r0, #4120
                     if self.little_endian() {
@@ -422,37 +420,9 @@ impl SymObject for goblin::elf::Elf {
     }
 }
 
-fn get_crate_name() -> String {
-    let mut toml_fd = File::open("Cargo.toml")
-        .expect("No Cargo.toml file found in root directory...");
-    let mut toml = String::new();
-    let _ = toml_fd.read_to_string(&mut toml);
-    let value: toml::Value = toml.parse().expect("Malformed Cargo.toml file");
-    let package_name = value.lookup("package.name")
-                            .expect("No package.name in Cargo.toml")
-                            .as_str()
-                            .unwrap()
-                            .to_owned()
-        // we only replace this if it's a library..., so this breaks on ourself :/
-                            .replace("-", "_");
-    package_name
-}
-
-fn get_target(crate_name: &str) -> Option<PathBuf> {
-    let targets = [Path::new("target").join("debug").join(&crate_name),
-                   Path::new("target").join("debug").join(&format!("lib{}.so", &crate_name)),
-                   Path::new("target").join("debug").join(&format!("lib{}.rlib", &crate_name)),
-                   Path::new("target").join("debug").join(&format!("lib{}.a", &crate_name))];
-    for target in &targets {
-        match File::open(&target) {
-            Ok(_) => return Some(target.clone()),
-            _ => (),
-        }
-    }
-    None
-}
-
-fn run(fd: &mut File, config: &Config) -> Result<()> {
+fn run(config: &Config) -> Result<()> {
+    let marksman = Marksman::new(config.file)?;
+    let mut fd = marksman.take_aim()?;
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];
     let err = ErrorKind::InvalidInput;
@@ -464,7 +434,7 @@ fn run(fd: &mut File, config: &Config) -> Result<()> {
     bytes.seek(SeekFrom::Start(0))?;
     if &magic[0..goblin::archive::SIZEOF_MAGIC] == goblin::archive::MAGIC {
         let archive = goblin::archive::Archive::parse(bytes, metadata.len() as usize)?;
-        let bytes = archive.extract(&format!("{}.0.o", &config.crate_name), bytes)?;
+        let bytes = archive.extract(&format!("{}.0.o", &marksman.crate_name), bytes)?;
         let mut bytes = Cursor::new(&bytes);
         // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
         let elf = goblin::elf::Elf::parse(&mut bytes)?;
@@ -482,7 +452,7 @@ fn run(fd: &mut File, config: &Config) -> Result<()> {
 fn main() {
 
     let matches = App::new("cargo-sym")
-        .version("0.0.3")
+        .version("0.0.4")
         .bin_name("cargo")
         .settings(&[AppSettings::GlobalVersion, AppSettings::SubcommandRequired])
         .subcommand(SubCommand::with_name("sym")
@@ -519,14 +489,11 @@ fn main() {
         .get_matches();
 
     let config = Config::from(&matches);
-    let mut fd = match config.file {
-            Some(binary) => {
-                println!("binary : {}", binary);
-                File::open(Path::new(binary))
-            }
-            _ => File::open(get_target(&config.crate_name).expect("No valid binary found")),
+    match run(&config) {
+        Ok (()) => (),
+        Err (err) => {
+            println!("Error: {:?}", err);
+            ::std::process::exit(1)
         }
-        .expect("Cannot open file");
-
-    run(&mut fd, &config).expect(&format!("Cannot read symbols from: {:?}", &fd));
+    }
 }
