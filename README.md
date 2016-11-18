@@ -1,4 +1,4 @@
-# cargo-sym
+# cargo-sym [![Build Status](https://travis-ci.org/m4b/cargo-sym.svg?branch=master)](https://travis-ci.org/m4b/cargo-sym)
 Prints various binary symbols in your crate. Also experimentally disassembles.
 
 This uses capstone for disassembly, so it will compile faster if you have capstone installed as a system library.

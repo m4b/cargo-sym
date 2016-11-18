@@ -1,13 +1,20 @@
+#![recursion_limit = "1024"]
+
 extern crate clap;
 extern crate goblin;
 extern crate rustc_demangle;
 extern crate toml;
 extern crate capstone;
+extern crate walkdir;
 #[macro_use]
 extern crate quick_error;
+//#[macro_use]
+//extern crate error_chain;
 
+mod errors;
 pub mod symbol;
 use symbol::Symbol;
+use errors::*;
 
 use clap::{Arg, App, SubCommand, AppSettings};
 
@@ -15,21 +22,7 @@ use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, ErrorKind};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::result;
 use std::fmt;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Io(err: std::io::Error) { from () }
-        CapstoneError(err: capstone::error::Error) { from ()}
-        UnsupportedBinary { from() }
-        SectionlessBinary { description("Cannot analyze and disassemble a sectionless (section stripped) binary") from() }
-        StrippedBinary { description("Cannot analyze and disassemble a stripped binary") from() }
-    }
-}
-
-type Result<T> = result::Result<T, Error>;
 
 /// The command line state we're interested in
 #[derive(Debug)]
