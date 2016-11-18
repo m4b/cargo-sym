@@ -1,0 +1,46 @@
+cache: cargo
+dist: trusty
+language: generic
+language: rust
+rust: stable
+
+compiler: clang
+addons:
+    apt:
+       sources: ['ubuntu-toolchain-r-test', 'llvm-toolchain-precise-3.5']
+
+matrix:
+  allow_failures:
+    - rust: nightly
+  include:
+    # OSX
+    - env: TARGET=i686-apple-darwin
+      os: osx
+    - env: TARGET=x86_64-apple-darwin
+      os: osx
+
+    - env: TARGET=i686-apple-darwin
+      os: osx
+      rust: nightly
+    - env: TARGET=x86_64-apple-darwin
+      os: osx
+      rust: nightly
+    # Linux
+    - env: TARGET=i686-unknown-linux-gnu
+    - env: TARGET=i686-unknown-linux-musl
+    - env: TARGET=x86_64-unknown-linux-musl
+    - env: TARGET=i686-unknown-linux-gnu
+      rust: nightly
+    - env: TARGET=i686-unknown-linux-musl
+      rust: nightly
+    - env: TARGET=x86_64-unknown-linux-gnu
+      rust: nightly
+    - env: TARGET=x86_64-unknown-linux-musl
+      rust: nightly
+
+script: cargo test
+
+cache:
+  directories:
+    - $HOME/.cargo
+    - target

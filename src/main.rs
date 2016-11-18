@@ -120,7 +120,7 @@ pub trait SymObject: fmt::Debug {
                         let c = if c.is_control() { '.' } else { c };
                         print!("{}", c);
                     }
-                    println!();
+                    println!("");
                     self.print_vaddr(vaddr + 1 + i as u64);
                 }
                 column += 1;
@@ -142,7 +142,7 @@ pub trait SymObject: fmt::Debug {
             let c = if c.is_control() { '.' } else { c };
             print!("{}", c);
         }
-        println!();
+        println!("");
         Ok(())
     }
     #[inline]
@@ -215,7 +215,7 @@ pub trait SymObject: fmt::Debug {
         } else {
             self.print_non_function(bytes, symbol.vaddr, config)?
         }
-        println!();
+        println!("");
         Ok(())
     }
     fn print_symbols(&self, config: &Config) {
