@@ -317,7 +317,7 @@ impl SymObject for goblin::elf::Elf {
         let mut elf_syms = syms.into_iter()
             .filter(|sym| {
                 (sym.is_function() ||
-                 goblin::elf::sym::st_type(sym.st_info()) == goblin::elf::sym::STT_OBJECT) &&
+                 sym.st_type() == goblin::elf::sym::STT_OBJECT) &&
                 !sym.is_import() && !&strtab[sym.st_name()].is_empty()
             })
             .collect::<Vec<_>>();
