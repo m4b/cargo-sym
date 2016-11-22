@@ -11,6 +11,7 @@ pub struct Config<'a> {
     pub example: Option<&'a str>,
     pub file: Option<&'a str>,
     pub base_target: &'static str,
+    pub target: Option<&'a str>,
 }
 
 impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
@@ -24,6 +25,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
         let file_name = matches.value_of("binary");
         let example = matches.value_of("example");
         let debug_or_release = if release { "release" } else { "debug" };
+        let target = matches.value_of("target");
         Config {
             demangle: demangle,
             exports: exports,
@@ -33,6 +35,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
             example: example,
             file: file_name,
             base_target: debug_or_release,
+            target: target,
         }
     }
 }

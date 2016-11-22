@@ -446,6 +446,13 @@ fn main() {
                         .value_name("RELEASE")
                         .takes_value(false)
                         .help("Whether to search release target directories (default is debug)"),
+                    Arg::with_name("target")
+                        .short("t")
+                        .long("target")
+                        .value_name("target")
+                        .takes_value(true)
+                        .help("Use the given target even if other targets \
+                               are present"),
                     Arg::with_name("example")
                         .short("x")
                         .long("example")

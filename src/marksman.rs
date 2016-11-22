@@ -50,13 +50,40 @@ fn get_crate_name() -> Result<String> {
 fn find_target(crate_name: &str, config: &Config) -> Result<PathBuf> {
     let target_list = target_list()?;
     let mut target = Path::new("target").to_path_buf();
-    for entry in WalkDir::new("target").max_depth(1) {
-        let entry = entry?;
-        println!("filename: {:?}", entry.file_name());
-        let filename: String = entry.file_name().to_str().unwrap().to_string();
-        if target_list.contains(&filename) {
-            target = entry.path().to_path_buf();
-            break;
+    match config.target {
+        Some(t) => {
+            target = target.join(t);
+            // if we're not the same as the base target (debug/release), then we add it
+            if t != config.base_target {
+                target = target.join(&config.base_target);
+            }
+            // add examples if we asked for it
+            if config.example.is_some() {
+                target = target.join("examples");
+            }
+        }
+        None => {
+            // fixme: we really should actually _try_ each of these file targets and use it if it's there
+            // that way we iterate through known targets for free; but maybe this is very unlikely and
+            // the user should just delete half-built/unused stale/old targets
+            for entry in WalkDir::new("target").max_depth(1) {
+                let entry = entry?;
+                //println!("filename: {:?}", entry.file_name());
+                let filename: String = entry.file_name().to_str().unwrap().to_string();
+                // we choose the first available target in the list; if none are found, we default to target/debug
+                if target_list.contains(&filename) {
+                    target = entry.path().to_path_buf();
+                    //println!("using target: {:?}", target);
+                    break;
+                }
+            }
+            let base_target = if config.example.is_some() {
+                Path::new(&config.base_target).join(&"examples")
+            } else {
+                Path::new(&config.base_target).to_path_buf()
+            };
+            target = target.join(base_target);
+
         }
     }
     let names = [crate_name.to_string(),
@@ -64,17 +91,12 @@ fn find_target(crate_name: &str, config: &Config) -> Result<PathBuf> {
                  format!("lib{}.rlib", &crate_name),
                  format!("lib{}.a", &crate_name)];
 
-    let base_target = if config.example.is_some() {
-        Path::new(&config.base_target).join(&"examples")
-    } else {
-        Path::new(&config.base_target).to_path_buf()
-    };
     let targets: Vec<PathBuf> = names.iter()
-        .map(|name| target.join(&base_target).join(&name))
+        .map(|name| target.join(&name))
         .collect();
 
     for target in &targets {
-        println!("target {:?}", target);
+        //println!("target {:?}", target);
         if target.exists() {
             return Ok(target.clone());
         }
