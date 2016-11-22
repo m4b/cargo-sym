@@ -34,14 +34,13 @@ fn get_crate_name() -> Result<String> {
     let value: toml::Value = toml.parse().unwrap();
     let package_name = match value.lookup("package.name") {
         Some(package_name) => {
-            package_name
-            .as_str()
-            .unwrap()
-            .to_owned()
+            package_name.as_str()
+                .unwrap()
+                .to_owned()
             // FIXME: we only replace this if it's a library..., so this breaks on ourself :/
-            //.replace("-", "_")
-        },
-        None => Err(Error::MissingPackageName)?
+            // .replace("-", "_")
+        }
+        None => Err(Error::MissingPackageName)?,
     };
     Ok(package_name)
 }
@@ -58,16 +57,14 @@ fn find_target(crate_name: &str) -> Result<PathBuf> {
             break;
         }
     }
-    let targets = [
-        target.join("debug").join(&crate_name),
-        target.join("debug").join(&format!("lib{}.so", &crate_name)),
-        target.join("debug").join(&format!("lib{}.rlib", &crate_name)),
-        target.join("debug").join(&format!("lib{}.a", &crate_name))
-    ];
+    let targets = [target.join("debug").join(&crate_name),
+                   target.join("debug").join(&format!("lib{}.so", &crate_name)),
+                   target.join("debug").join(&format!("lib{}.rlib", &crate_name)),
+                   target.join("debug").join(&format!("lib{}.a", &crate_name))];
     for target in &targets {
         println!("target {:?}", target);
         if target.exists() {
-            return Ok(target.clone())
+            return Ok(target.clone());
         }
     }
     Err(Error::NoTargetFoundFor(target_list))
@@ -79,23 +76,19 @@ pub struct Marksman {
 }
 
 impl Marksman {
-    pub fn crate_name (&self) -> &str {
+    pub fn crate_name(&self) -> &str {
         &self.crate_name
     }
     pub fn new(file: Option<&str>) -> Result<Self> {
         let crate_name = get_crate_name()?;
         let target = match file {
-            Some(binary) => {
-                Path::new(binary).to_path_buf()
-            },
-            None => {
-                find_target(&crate_name)?
-            }
+            Some(binary) => Path::new(binary).to_path_buf(),
+            None => find_target(&crate_name)?,
         };
         println!("target : {:?}", target);
-        Ok( Marksman {
+        Ok(Marksman {
             crate_name: crate_name,
-            target: target
+            target: target,
         })
     }
     pub fn take_aim(&self) -> Result<File> {

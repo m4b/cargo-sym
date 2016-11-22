@@ -8,50 +8,23 @@ extern crate capstone;
 extern crate walkdir;
 #[macro_use]
 extern crate quick_error;
-//#[macro_use]
-//extern crate error_chain;
+// #[macro_use]
+// extern crate error_chain;
 
-pub mod errors;
 pub mod symbol;
 pub mod marksman;
+mod errors;
+mod config;
+
+use config::Config;
 use symbol::Symbol;
 use errors::*;
 use marksman::Marksman;
-
 use clap::{Arg, App, SubCommand, AppSettings};
 
 use std::io::{self, Cursor, Read, Seek, ErrorKind};
 use std::io::SeekFrom;
 use std::fmt;
-
-/// The command line state we're interested in
-#[derive(Debug)]
-pub struct Config<'a> {
-    pub exports: bool,
-    pub demangle: bool,
-    pub disassemble: bool,
-    pub dump: bool,
-    pub file: Option<&'a str>,
-}
-
-impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
-
-    fn from(matches: &'a clap::ArgMatches) -> Self {
-        let matches = matches.subcommand_matches("sym").unwrap();
-        let demangle = matches.is_present("demangle");
-        let exports = matches.is_present("exports");
-        let disassemble = matches.is_present("disassemble");
-        let dump = matches.is_present("dump");
-        let file_name = matches.value_of("binary");
-        Config {
-            demangle: demangle,
-            exports: exports,
-            disassemble: disassemble,
-            dump: dump,
-            file: file_name,
-        }
-    }
-}
 
 /// A symbol object.
 /// - It knows how to return `Symbol`s _and_ disassemble itself, as well as other useful information about itself.
@@ -314,8 +287,7 @@ impl SymObject for goblin::elf::Elf {
         // filter the symbols to remove imports and empty symbol names
         let mut elf_syms = syms.into_iter()
             .filter(|sym| {
-                (sym.is_function() ||
-                 sym.st_type() == goblin::elf::sym::STT_OBJECT) &&
+                (sym.is_function() || sym.st_type() == goblin::elf::sym::STT_OBJECT) &&
                 !sym.is_import() && !&strtab[sym.st_name()].is_empty()
             })
             .collect::<Vec<_>>();
@@ -457,7 +429,8 @@ fn main() {
         .settings(&[AppSettings::GlobalVersion, AppSettings::SubcommandRequired])
         .subcommand(SubCommand::with_name("sym")
             .author("m4b <m4b.github.io@gmail.com>")
-            .about("Prints the debugging symbols in your binary. Or disassembles arbitrary ISAs for 32/64 bit binaries. No big deal")
+            .about("Prints the debugging symbols in your binary. Or disassembles arbitrary ISAs \
+                    for 32/64 bit binaries. No big deal")
             .args(&[Arg::with_name("binary")
                         .help("The binary file to read ")
                         .required(false)
@@ -467,7 +440,19 @@ fn main() {
                         .long("disassemble")
                         .value_name("DISASSEMBLE")
                         .takes_value(false)
-                        .help("Whether to disassaemble or not "),
+                        .help("Whether to disassemble or not "),
+                    Arg::with_name("release")
+                        .long("release")
+                        .value_name("RELEASE")
+                        .takes_value(false)
+                        .help("Whether to search release target directories (default is debug)"),
+                    Arg::with_name("example")
+                        .short("x")
+                        .long("example")
+                        .value_name("EXAMPLE")
+                        .takes_value(true)
+                        .help("If present, a binary in the example folder with the given name \
+                               is used as the target"),
                     Arg::with_name("demangle")
                         .short("-C")
                         .long("demangle")
@@ -491,7 +476,7 @@ fn main() {
     let config = Config::from(&matches);
     match run(&config) {
         Ok (()) => (),
-        Err (err) => {
+        Err(err) => {
             println!("Error: {:?}", err);
             ::std::process::exit(1)
         }
