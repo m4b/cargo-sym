@@ -34,15 +34,24 @@ impl<'a> Symbol<'a> {
     pub fn demangle(&self) -> String {
         self.demangle.to_string()
     }
-    pub fn format(&self, demangle: bool, is_64: bool) -> String {
+    pub fn format(&self, demangle: bool, is_64: bool, use_delimiter: bool) -> String {
         let mut name: &str = &self.demangle();
         if !demangle {
             name = &self.name();
         }
         if is_64 {
-            format!("{:016x} <{}>", self.vaddr, name)
+            // yup this is horrible but i don't even care
+            if use_delimiter {
+                format!("{:016x} <{}>", self.vaddr, &name)
+            } else {
+                format!("{:016x} {}", self.vaddr, &name)
+            }
         } else {
-            format!("{:08x} <{}>", self.vaddr, name)
+            if use_delimiter {
+                format!("{:08x} <{}>", self.vaddr, &name)
+            } else {
+                format!("{:016x} {}", self.vaddr, &name)
+            }
         }
     }
 }

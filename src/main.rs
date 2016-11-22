@@ -170,7 +170,7 @@ pub trait SymObject: fmt::Debug {
                                     -> Result<()> {
         let offset = symbol.offset as usize;
         let bytes = &bytes[offset..offset + symbol.size];
-        println!("{}:", symbol.format(config.demangle, self.is_64()));
+        println!("{}:", symbol.format(config.demangle, self.is_64(), true));
         if symbol.is_function {
             let instructions = capstone.disassemble(bytes, symbol.vaddr)?;
             if !instructions.is_empty() {
@@ -184,7 +184,7 @@ pub trait SymObject: fmt::Debug {
     }
     fn print_symbols(&self, config: &Config) {
         for symbol in self.symbols(config) {
-            println!("{}", symbol.format(config.demangle, self.is_64()))
+            println!("{}", symbol.format(config.demangle, self.is_64(), false))
         }
     }
     fn analyze(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
@@ -393,7 +393,7 @@ impl SymObject for goblin::elf::Elf {
 }
 
 fn run(config: &Config) -> Result<()> {
-    let marksman = Marksman::new(config.file)?;
+    let marksman = Marksman::new(&config)?;
     let mut fd = marksman.take_aim()?;
     // todo write a generic peek function in goblin you jerk
     let mut magic = [0u8; 16];

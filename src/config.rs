@@ -10,6 +10,7 @@ pub struct Config<'a> {
     pub release: bool,
     pub example: Option<&'a str>,
     pub file: Option<&'a str>,
+    pub base_target: &'static str,
 }
 
 impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
@@ -22,6 +23,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
         let release = matches.is_present("release");
         let file_name = matches.value_of("binary");
         let example = matches.value_of("example");
+        let debug_or_release = if release { "release" } else { "debug" };
         Config {
             demangle: demangle,
             exports: exports,
@@ -30,6 +32,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
             release: release,
             example: example,
             file: file_name,
+            base_target: debug_or_release,
         }
     }
 }

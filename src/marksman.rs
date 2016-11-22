@@ -1,3 +1,5 @@
+use config::Config;
+
 use walkdir::WalkDir;
 use toml;
 use errors::*;
@@ -45,7 +47,7 @@ fn get_crate_name() -> Result<String> {
     Ok(package_name)
 }
 
-fn find_target(crate_name: &str) -> Result<PathBuf> {
+fn find_target(crate_name: &str, config: &Config) -> Result<PathBuf> {
     let target_list = target_list()?;
     let mut target = Path::new("target").to_path_buf();
     for entry in WalkDir::new("target").max_depth(1) {
@@ -57,10 +59,20 @@ fn find_target(crate_name: &str) -> Result<PathBuf> {
             break;
         }
     }
-    let targets = [target.join("debug").join(&crate_name),
-                   target.join("debug").join(&format!("lib{}.so", &crate_name)),
-                   target.join("debug").join(&format!("lib{}.rlib", &crate_name)),
-                   target.join("debug").join(&format!("lib{}.a", &crate_name))];
+    let names = [crate_name.to_string(),
+                 format!("lib{}.so", &crate_name),
+                 format!("lib{}.rlib", &crate_name),
+                 format!("lib{}.a", &crate_name)];
+
+    let base_target = if config.example.is_some() {
+        Path::new(&config.base_target).join(&"examples")
+    } else {
+        Path::new(&config.base_target).to_path_buf()
+    };
+    let targets: Vec<PathBuf> = names.iter()
+        .map(|name| target.join(&base_target).join(&name))
+        .collect();
+
     for target in &targets {
         println!("target {:?}", target);
         if target.exists() {
@@ -79,11 +91,17 @@ impl Marksman {
     pub fn crate_name(&self) -> &str {
         &self.crate_name
     }
-    pub fn new(file: Option<&str>) -> Result<Self> {
+    pub fn new(config: &Config) -> Result<Self> {
         let crate_name = get_crate_name()?;
-        let target = match file {
+        let target = match config.file {
             Some(binary) => Path::new(binary).to_path_buf(),
-            None => find_target(&crate_name)?,
+            None => {
+                let target_name = match config.example {
+                    Some(example) => example,
+                    None => &crate_name,
+                };
+                find_target(&target_name, &config)?
+            }
         };
         println!("target : {:?}", target);
         Ok(Marksman {
