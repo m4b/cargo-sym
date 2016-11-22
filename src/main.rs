@@ -458,7 +458,7 @@ fn main() {
                         .long("example")
                         .value_name("EXAMPLE")
                         .takes_value(true)
-                        .help("If present, a binary in the example folder with the given name \
+                        .help("If present, a binary in the examples folder with the given name \
                                is used as the target"),
                     Arg::with_name("demangle")
                         .short("-C")
