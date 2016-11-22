@@ -15,7 +15,12 @@ or via git:
 
 Then:
 
-1. `cargo sym` will print every debugging symbol it finds in the first valid binary target in `target/debug`
+1. `cargo sym` will print every debugging symbol it finds in the first valid binary target in `target/<target>/debug`. This can be, for example:
+
+  a.`target/debug` (this is used if it doesn't find a special target, like the following)
+  
+  b. `target/x86_64-unknown-linux-musl/debug`
+
 2. `cargo sym -C` will print every debugging symbol demangled
 3. `cargo sym -e` will print every exported symbol importable by other binaries
 4. `cargo sym -Ce` will do `-C` and `-e` together :]
