@@ -9,7 +9,7 @@ license = "MIT"
 description = "Prints various binary symbols in your crate"
 
 [dependencies]
-goblin = {git = "https://github.com/m4b/goblin", version = "0.0.6"}
+goblin = "0.0.6"
 rustc-demangle = "0.1.2"
 clap = "2.16.4"
 toml = "0.2"

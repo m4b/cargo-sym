@@ -12,6 +12,7 @@ pub struct Config<'a> {
     pub file: Option<&'a str>,
     pub base_target: &'static str,
     pub target: Option<&'a str>,
+    pub crate_name: Option<&'a str>,
 }
 
 impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
@@ -26,6 +27,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
         let example = matches.value_of("example");
         let debug_or_release = if release { "release" } else { "debug" };
         let target = matches.value_of("target");
+        let crate_name = matches.value_of("crate-name");
         Config {
             demangle: demangle,
             exports: exports,
@@ -36,6 +38,7 @@ impl<'a> From<&'a clap::ArgMatches<'a>> for Config<'a> {
             file: file_name,
             base_target: debug_or_release,
             target: target,
+            crate_name: crate_name,
         }
     }
 }

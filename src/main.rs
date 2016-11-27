@@ -406,7 +406,8 @@ fn run(config: &Config) -> Result<()> {
     bytes.seek(SeekFrom::Start(0))?;
     if &magic[0..goblin::archive::SIZEOF_MAGIC] == goblin::archive::MAGIC {
         let archive = goblin::archive::Archive::parse(bytes, metadata.len() as usize)?;
-        let bytes = archive.extract(&format!("{}.0.o", &marksman.crate_name), bytes)?;
+        let bytes = archive.extract(&format!("{}.0.o", &marksman.crate_name), bytes)
+            .or(archive.extract(&format!("{}.o", &marksman.crate_name), bytes))?;
         let mut bytes = Cursor::new(&bytes);
         // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
         let elf = goblin::elf::Elf::parse(&mut bytes)?;
@@ -458,8 +459,16 @@ fn main() {
                         .long("example")
                         .value_name("EXAMPLE")
                         .takes_value(true)
-                        .help("If present, a binary in the examples folder with the given name \
-                               is used as the target"),
+                        .help("If present, a binary in the examples folder with the given \
+                               name is used as the target"),
+                    Arg::with_name("crate-name")
+                        .short("-n")
+                        .long("name")
+                        .value_name("CRATE_NAME")
+                        .takes_value(true)
+                        .help("Force the given crate name to be used instead of searching the \
+                               Cargo.toml file.This is useful when extracting specific binary \
+                               objects to disassemble in static archives."),
                     Arg::with_name("demangle")
                         .short("-C")
                         .long("demangle")

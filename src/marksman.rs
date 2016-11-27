@@ -68,12 +68,12 @@ fn find_target(crate_name: &str, config: &Config) -> Result<PathBuf> {
             // the user should just delete half-built/unused stale/old targets
             for entry in WalkDir::new("target").max_depth(1) {
                 let entry = entry?;
-                //println!("filename: {:?}", entry.file_name());
+                // println!("filename: {:?}", entry.file_name());
                 let filename: String = entry.file_name().to_str().unwrap().to_string();
                 // we choose the first available target in the list; if none are found, we default to target/debug
                 if target_list.contains(&filename) {
                     target = entry.path().to_path_buf();
-                    //println!("using target: {:?}", target);
+                    // println!("using target: {:?}", target);
                     break;
                 }
             }
@@ -96,7 +96,7 @@ fn find_target(crate_name: &str, config: &Config) -> Result<PathBuf> {
         .collect();
 
     for target in &targets {
-        //println!("target {:?}", target);
+        // println!("target {:?}", target);
         if target.exists() {
             return Ok(target.clone());
         }
@@ -114,7 +114,10 @@ impl Marksman {
         &self.crate_name
     }
     pub fn new(config: &Config) -> Result<Self> {
-        let crate_name = get_crate_name()?;
+        let crate_name = match config.crate_name {
+            Some(crate_name) => crate_name.to_owned(),
+            None => get_crate_name()?,
+        };
         let target = match config.file {
             Some(binary) => Path::new(binary).to_path_buf(),
             None => {
