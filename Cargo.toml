@@ -15,10 +15,10 @@ clap = "2.16.4"
 toml = "0.2"
 walkdir = "1.0.1"
 #error-chain = "0.5.0"
-capstone = {git = "https://github.com/m4b/capstone-rs", version = "0.1.0"}
+capstone3 = "0.1.0"
 quick-error = "1.1.0"
 
 [features]
 # for now this allows to build on OSX as something is wrong with capstone-sys ./build.sh script
-default = ["capstone/build_capstone_src_cmake"]
-build_capstone_src = ["capstone/build_capstone_src"]
+default = ["capstone3/build_capstone_src_cmake"]
+build_capstone_src = ["capstone3/build_capstone_src"]

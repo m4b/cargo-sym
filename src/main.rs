@@ -4,7 +4,7 @@ extern crate clap;
 extern crate goblin;
 extern crate rustc_demangle;
 extern crate toml;
-extern crate capstone;
+extern crate capstone3 as capstone;
 extern crate walkdir;
 #[macro_use]
 extern crate quick_error;
