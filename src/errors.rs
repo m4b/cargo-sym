@@ -1,5 +1,7 @@
 use std::io;
 use capstone;
+use scroll;
+use goblin;
 use std::result;
 use toml;
 use walkdir;
@@ -10,6 +12,8 @@ quick_error! {
         Io(err: io::Error) { from () }
         Walkdir(err: walkdir::Error) { from () }
         CapstoneError(err: capstone::error::Error) { from ()}
+        ScrollError(err: scroll::Error) { from ()}
+        GoblinError(err: goblin::error::Error) { from ()}
         UnsupportedBinary { from() }
         SectionlessBinary { description("Cannot analyze and disassemble a sectionless (section stripped) binary") from() }
         StrippedBinary { description("Cannot analyze and disassemble a stripped binary") from() }
