@@ -263,6 +263,7 @@ impl SymObject for goblin::elf::Elf {
                    disassembler: capstone::Capstone,
                    config: &Config)
                    -> Result<()> {
+        use goblin::elf::reloc::ElfReloc;
         let mut mode = capstone::Mode::LittleEndian;
         let arch = self.get_arch()?;
         let mut capstone = disassembler;
@@ -330,7 +331,7 @@ impl SymObject for goblin::elf::Elf {
                         let symbol = Symbol::new(&"PLT", start, vaddr, ssize, true);
                         self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
                         let mut offset = size;
-                        for rela in &self.pltrela {
+                        for rela in &self.pltrelocs {
                             let start = start + offset;
                             let vaddr = vaddr + offset;
                             let symindex = rela.r_sym();
@@ -406,12 +407,17 @@ fn run(config: &Config) -> Result<()> {
     bytes.seek(SeekFrom::Start(0))?;
     if &magic[0..goblin::archive::SIZEOF_MAGIC] == goblin::archive::MAGIC {
         let archive = goblin::archive::Archive::parse(bytes, metadata.len() as usize)?;
-        let bytes = archive.extract(&format!("{}.0.o", &marksman.crate_name), bytes)
-            .or(archive.extract(&format!("{}.o", &marksman.crate_name), bytes))?;
-        let mut bytes = Cursor::new(&bytes);
-        // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
-        let elf = goblin::elf::Elf::parse(&mut bytes)?;
-        elf.analyze(&mut bytes, config)
+        for member in archive.members() {
+            if member.starts_with(&marksman.crate_name) && member.ends_with("0.o") {
+                let bytes = archive.extract(member, bytes)?;
+                // ideally would pattern match (or just recurse) on the identifier here but we're
+                // only supporting elf
+                let mut bytes = Cursor::new(&bytes);
+                let elf =  goblin::elf::Elf::parse(&mut bytes)?;
+                return elf.analyze(&mut bytes, config);
+            }
+        }
+        panic!("No object named {}*0.o was found", marksman.crate_name);
     } else if &magic[0..4] == goblin::elf::header::ELFMAG {
         let elf = goblin::elf::Elf::parse(bytes)?;
         elf.analyze(bytes, config)
