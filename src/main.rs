@@ -2,6 +2,7 @@
 
 extern crate clap;
 extern crate goblin;
+extern crate scroll;
 extern crate rustc_demangle;
 extern crate toml;
 extern crate capstone3 as capstone;
@@ -22,8 +23,7 @@ use errors::*;
 use marksman::Marksman;
 use clap::{Arg, App, SubCommand, AppSettings};
 
-use std::io::{self, Cursor, Read, Seek, ErrorKind};
-use std::io::SeekFrom;
+use std::io::{self, Cursor, Read, ErrorKind};
 use std::fmt;
 
 /// A symbol object.
@@ -35,7 +35,7 @@ pub trait SymObject: fmt::Debug {
     fn is_64(&self) -> bool;
     fn symbols(&self, config: &Config) -> Vec<Symbol>;
     fn disassemble(&self,
-                   bytes: &mut Cursor<&Vec<u8>>,
+                   bytes: &mut Cursor<&[u8]>,
                    disassembler: capstone::Capstone,
                    config: &Config)
                    -> Result<()>;
@@ -187,7 +187,7 @@ pub trait SymObject: fmt::Debug {
             println!("{}", symbol.format(config.demangle, self.is_64(), false))
         }
     }
-    fn analyze(&self, bytes: &mut Cursor<&Vec<u8>>, config: &Config) -> Result<()> {
+    fn analyze(&self, bytes: &mut Cursor<&[u8]>, config: &Config) -> Result<()> {
         if config.disassemble {
             let disassembler = self.new_disassembler()?;
             self.disassemble(bytes, disassembler, config)?;
@@ -259,10 +259,11 @@ impl SymObject for goblin::elf::Elf {
     }
 
     fn disassemble(&self,
-                   bytes: &mut Cursor<&Vec<u8>>,
+                   bytes: &mut Cursor<&[u8]>,
                    disassembler: capstone::Capstone,
                    config: &Config)
                    -> Result<()> {
+        use goblin::elf::reloc::ElfReloc;
         let mut mode = capstone::Mode::LittleEndian;
         let arch = self.get_arch()?;
         let mut capstone = disassembler;
@@ -330,7 +331,7 @@ impl SymObject for goblin::elf::Elf {
                         let symbol = Symbol::new(&"PLT", start, vaddr, ssize, true);
                         self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
                         let mut offset = size;
-                        for rela in &self.pltrela {
+                        for rela in &self.pltrelocs {
                             let start = start + offset;
                             let vaddr = vaddr + offset;
                             let symindex = rela.r_sym();
@@ -403,18 +404,27 @@ fn run(config: &Config) -> Result<()> {
     fd.read_to_end(&mut buffer)?;
     let mut bytes = &mut Cursor::new(&buffer);
     bytes.read(&mut magic)?;
-    bytes.seek(SeekFrom::Start(0))?;
+    let mut bytes = scroll::Buffer::new(&buffer);
     if &magic[0..goblin::archive::SIZEOF_MAGIC] == goblin::archive::MAGIC {
-        let archive = goblin::archive::Archive::parse(bytes, metadata.len() as usize)?;
-        let bytes = archive.extract(&format!("{}.0.o", &marksman.crate_name), bytes)
-            .or(archive.extract(&format!("{}.o", &marksman.crate_name), bytes))?;
-        let mut bytes = Cursor::new(&bytes);
-        // ideally would pattern match (or just recurse) on the identifier here but we're only supporting elf
-        let elf = goblin::elf::Elf::parse(&mut bytes)?;
-        elf.analyze(&mut bytes, config)
+        let archive = goblin::archive::Archive::parse(&mut bytes, metadata.len() as usize)?;
+        for member in archive.members() {
+            if member.starts_with(&marksman.crate_name) && member.ends_with("0.o") {
+                let bytes = archive.extract(member, &bytes)?;
+                // ideally would pattern match (or just recurse) on the identifier here but we're
+                // only supporting elf
+                let elf = goblin::elf::Elf::parse(&bytes)?;
+                let mut bytes = Cursor::new(bytes);
+                return elf.analyze(&mut bytes, config);
+            }
+        }
+        Err(Error::from(io::Error::new(err,
+                                       format!("No member named {:?}*0.o was found in target: {:?}",
+                                               marksman.crate_name,
+                                               &fd))))
     } else if &magic[0..4] == goblin::elf::header::ELFMAG {
-        let elf = goblin::elf::Elf::parse(bytes)?;
-        elf.analyze(bytes, config)
+        let elf = goblin::elf::Elf::parse(&buffer)?;
+        let mut bytes = Cursor::new(buffer.as_slice());
+        elf.analyze(&mut bytes, config)
     } else {
         Err(Error::from(io::Error::new(err,
                                        format!("No binary backend available for target: {:?}",
