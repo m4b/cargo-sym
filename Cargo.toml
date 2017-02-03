@@ -7,6 +7,7 @@ readme = "README.md"
 repository = "https://github.com/m4b/cargo-sym"
 license = "MIT"
 description = "Prints various binary symbols in your crate"
+documentation = "https://docs.rs/crate/cargo-sym/"
 
 [dependencies]
 goblin = "0.0.7"
