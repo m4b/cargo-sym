@@ -1,6 +1,6 @@
 [package]
 name = "cargo-sym"
-version = "0.0.5"
+version = "0.0.6"
 authors = ["m4b <m4b.github.io@gmail.com>"]
 keywords = ["cargo", "cargo-subcommand", "crates", "symbols", "debug"]
 readme = "README.md"
@@ -10,8 +10,8 @@ description = "Prints various binary symbols in your crate"
 documentation = "https://docs.rs/crate/cargo-sym/"
 
 [dependencies]
-goblin = "0.0.7"
-scroll = "0.2.0"
+goblin = "0.0.8"
+scroll = "0.3.0"
 rustc-demangle = "0.1.2"
 clap = "2.16.4"
 toml = "0.2"

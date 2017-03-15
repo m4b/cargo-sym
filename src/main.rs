@@ -201,7 +201,7 @@ pub trait SymObject: fmt::Debug {
 }
 
 fn bias(sym: &goblin::elf::Sym, section: &goblin::elf::SectionHeader) -> u64 {
-    (sym.st_value() - section.sh_addr()) + section.sh_offset()
+    (sym.st_value - section.sh_addr) + section.sh_offset
 }
 
 fn valid_disassembly_target(name: &str) -> bool {
@@ -227,19 +227,19 @@ impl SymObject for goblin::elf::Elf {
         } else {
             (&self.syms, &self.strtab)
         };
-        let mask = match self.header.e_machine() {
+        let mask = match self.header.e_machine {
             goblin::elf::header::EM_ARM => !1,
             _ => !0,
         };
         for sym in iter {
-            let name = &strtab[sym.st_name() as usize];
+            let name = &strtab[sym.st_name];
             // we skip boring empty symbol names and imports
             if !name.is_empty() && (!config.exports || !sym.is_import()) {
                 let addr = {
-                    let addr = sym.st_value();
+                    let addr = sym.st_value;
                     if addr == 0 { 0 } else { addr & mask }
                 };
-                syms.push(Symbol::new(name, addr, addr, sym.st_size() as usize, sym.is_function()));
+                syms.push(Symbol::new(name, addr, addr, sym.st_size as usize, sym.is_function()));
             }
         }
         syms.sort_by(|s1, s2| s1.offset.cmp(&s2.offset));
@@ -249,7 +249,7 @@ impl SymObject for goblin::elf::Elf {
     fn get_arch(&self) -> Result<capstone::Arch> {
         use goblin::elf::header::*;
         use capstone::Arch::*;
-        match self.header.e_machine() {
+        match self.header.e_machine {
             EM_AARCH64 => Ok(ARM64),
             EM_ARM => Ok(ARM),
             EM_X86_64 => Ok(X86),
@@ -263,7 +263,6 @@ impl SymObject for goblin::elf::Elf {
                    disassembler: capstone::Capstone,
                    config: &Config)
                    -> Result<()> {
-        use goblin::elf::reloc::ElfReloc;
         let mut mode = capstone::Mode::LittleEndian;
         let arch = self.get_arch()?;
         let mut capstone = disassembler;
@@ -276,7 +275,7 @@ impl SymObject for goblin::elf::Elf {
         }
         let sections: Vec<(_, &str)> = section_headers.into_iter()
             .map(|section| {
-                let section_name = &shdr_strtab[section.sh_name()];
+                let section_name = &shdr_strtab[section.sh_name];
                 (section, section_name)
             })
             .collect();
@@ -289,13 +288,13 @@ impl SymObject for goblin::elf::Elf {
         let mut elf_syms = syms.into_iter()
             .filter(|sym| {
                 (sym.is_function() || sym.st_type() == goblin::elf::sym::STT_OBJECT) &&
-                !sym.is_import() && !&strtab[sym.st_name()].is_empty()
+                !sym.is_import() && !&strtab[sym.st_name].is_empty()
             })
             .collect::<Vec<_>>();
         elf_syms.sort_by(|s1, s2| {
             use std::cmp::Ordering::*;
-            match s1.st_shndx().cmp(&s2.st_shndx()) {
-                Equal => s1.st_value().cmp(&s2.st_value()),
+            match s1.st_shndx.cmp(&s2.st_shndx) {
+                Equal => s1.st_value.cmp(&s2.st_value),
                 order => order,
             }
         });
@@ -306,12 +305,12 @@ impl SymObject for goblin::elf::Elf {
             // println!("name: {} st_shndx: {}", &strtab[sym.st_name()],  sym.st_shndx());
             // println!("{} {:?}", &strtab[sym.st_name()], sym);
             let is_last = i >= nsyms - 1;
-            let section_index = sym.st_shndx();
+            let section_index = sym.st_shndx;
             if section_index >= sections.len() {
                 continue;
             }
-            let (ref section, ref section_name) = sections[sym.st_shndx() as usize];
-            if section.sh_type() != goblin::elf::section_header::SHT_PROGBITS ||
+            let (ref section, ref section_name) = sections[sym.st_shndx as usize];
+            if section.sh_type != goblin::elf::section_header::SHT_PROGBITS ||
                !valid_disassembly_target(section_name) {
                 continue;
             }
@@ -323,10 +322,10 @@ impl SymObject for goblin::elf::Elf {
                     // TODO: this is now a _broken_ hack for printing PLT entries (it doesn't print them,
                     // because there are no longer any symbols with the plt section to set off this logic)
                     &".plt" | &".plt.got" => {
-                        let start = section.sh_offset();
-                        let vaddr = section.sh_addr();
-                        let ssize = section.sh_entsize() as usize;
-                        let size = section.sh_entsize();
+                        let start = section.sh_offset;
+                        let vaddr = section.sh_addr;
+                        let ssize = section.sh_entsize as usize;
+                        let size = section.sh_entsize;
                         let strtab = &self.dynstrtab;
                         let symbol = Symbol::new(&"PLT", start, vaddr, ssize, true);
                         self.print_instructions_at_symbol(&bytes, config, &capstone, &mode, symbol)?;
@@ -334,9 +333,9 @@ impl SymObject for goblin::elf::Elf {
                         for rela in &self.pltrelocs {
                             let start = start + offset;
                             let vaddr = vaddr + offset;
-                            let symindex = rela.r_sym();
-                            let sym = self.dynsyms.get(symindex);
-                            let name = &strtab[sym.st_name()];
+                            let symindex = rela.r_sym;
+                            let sym = &self.dynsyms[symindex];
+                            let name = &strtab[sym.st_name];
                             // println!("name: {} offset {:x} size: {} shname: {} shoffset: {:x} shaddr: {:x}", name, rela.r_offset(), size, section_name, section.sh_offset(), section.sh_addr());
                             let symbol = Symbol::new(&name, start, vaddr, ssize, true);
                             self.print_instructions_at_symbol(&bytes,
@@ -351,26 +350,26 @@ impl SymObject for goblin::elf::Elf {
                 }
             }
             // we're not doing plt stuff, so regular disassembly
-            let name = &strtab[sym.st_name()];
+            let name = &strtab[sym.st_name];
             if name.is_empty() {
                 continue;
             }
-            let mut size = sym.st_size() as usize;
+            let mut size = sym.st_size as usize;
             let mut offset = bias(&sym, &section);
             // we compute the size of unsized symbols on the fly. it sucks. because elf sucks.
             if size == 0 && !is_last {
                 let next_sym = &elf_syms[i + 1];
                 // println!("i: {} current {}, name{} next: {:?}", i, current_section, name, next_sym);
-                if current_section == next_sym.st_shndx() {
+                if current_section == next_sym.st_shndx {
                     let next_offset = bias(&next_sym, &section);
                     size = (next_offset - offset) as usize;
                 } else {
-                    size = section.sh_size() as usize;
+                    size = section.sh_size as usize;
                 }
             }
             // println!("offset {:x} size: {} section: {}, sh_type: {}", offset, size, section_name, section_header::sht_to_str(section.sh_type()));
             let vaddr = {
-                let mut vaddr = sym.st_value();
+                let mut vaddr = sym.st_value;
                 if arch == capstone::Arch::ARM {
                     if vaddr & 1 == 1 {
                         // we can speed up capstone mode switching here by using cached value, but who cares for now
